@@ -15,13 +15,23 @@ def coord_to_grid(lon_deg, lat_deg, H, r_pol, r_eq, lambda_0, size_x, size_y):
     if size_x == 2500:
         goes_conus_res = 56e-6 # Resolution for 2-km-resolution CONUS images
     elif size_x == 10000:
-        goes_conus_res = 14e-6 # Resolution for 2-km-resolution CONUS images
+        goes_conus_res = 14e-6 # Resolution for 0.5-km-resolution CONUS images
+    elif size_x == 5424:
+        goes_conus_res = 56e-6 # Full-disk resolution
+    else:
+        goes_conus_res = 280e-6 # Resolution for 10-km-resolution CONUS images
+    
+    # For full disk imagery
+    if size_x == 5424:
+        goes_lon = [-0.151872, 0.151872] # E/W extent of GOES-Wast CONUS images (rad)
+        goes_lat = [-0.151872, 0.151872] # N/S extent of GOES-Wast CONUS images (rad)
     # For GOES-17
-    goes_lon = [-0.07, 0.07] # E/W extent of GOES-Wast CONUS images (rad)
-    goes_lat = [0.044268005, 0.128212] # N/S extent of GOES-Wast CONUS images (rad)
-    # For GOES-16
-    # goes_lon = [-0.101332, 0.038612] # E/W extent of GOES-East CONUS images (rad)
-    # goes_lat = [0.044268005, 0.128212] # N/S extent of GOES-East CONUS images (rad)
+    else:
+        goes_lon = [-0.07, 0.07] # E/W extent of GOES-Wast CONUS images (rad)
+        goes_lat = [0.044268005, 0.128212] # N/S extent of GOES-Wast CONUS images (rad)
+        # For GOES-16
+        # goes_lon = [-0.101332, 0.038612] # E/W extent of GOES-East CONUS images (rad)
+        # goes_lat = [0.044268005, 0.128212] # N/S extent of GOES-East CONUS images (rad)
     
     lon, lat = [lon_deg*np.pi/180, lat_deg*np.pi/180] # Convert from degrees to radians
     phi_c = np.arctan(np.tan(lat)*(r_pol**2/r_eq**2)) # Geocentric latitude

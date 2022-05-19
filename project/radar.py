@@ -3,6 +3,8 @@
 """
 Radar handling script
 
+See Ryan May's great tutorial on this: https://nbviewer.org/gist/dopplershift/356f2e14832e9b676207
+
 @author: gabriel
 """
 
@@ -38,6 +40,12 @@ def polar_to_cartesian(az, rng):
     y = rng * np.cos(az_rad)
     return x, y
 
+def dist_to_coords(nws_coords, dx, dy):
+    lat = nws_coords[0] + (180/np.pi)*(dy/6378137)
+    lon = nws_coords[1] + (180/np.pi)*(dx/6378137)/np.cos(nws_coords[0] * np.pi/180)
+    
+    return [lat, lon]
+
 def data_query(date, lon, lat):
     # Open instance of a RadarServer to access data
     rs = RadarServer('http://tds-nexrad.scigw.unidata.ucar.edu/thredds/radarServer/nexrad/level2/S3/')
@@ -57,17 +65,29 @@ def data_query(date, lon, lat):
     ref_data = ref_var[sweep]
     rng = data.variables['distanceR_HI'][:]
     az = data.variables['azimuthR_HI'][sweep]
-    ref = raw_to_masked_float(ref_var, ref_data)
+    ref = raw_to_masked_float(ref_var, ref_data).filled(np.nan)
     x, y = polar_to_cartesian(az, rng)
+    # Convert distance data to coordinate data
+    x_, y_ = x.ravel(), y.ravel()
+    lons, lats = [None]*len(x_), [None]*len(y_)
+    for i in range(0, len(x_)):
+        lons[i], lats[i] = dist_to_coords([lat, lon], x_[i], y_[i])
+        
+    # Build xArray Dataset
+    ds = xr.Dataset(
+        data_vars={
+            'reflectivity': (['x', 'y'], ref.data)
+            },
+        coords={
+            'lon': (['x', 'y'], np.reshape(lons, ref.data.shape)),
+            'lat': (['x', 'y'], np.reshape(lats, ref.data.shape))
+        })
+    ds = ds.assign_coords(t=date)
+    ds = ds.expand_dims('t')
     
-    # Correction for NWS Hanford
-    
-    
-    return [x, y, ref], station_name
+    return ds, ref, station_name
 
-def plotting(data, center_nws, center_event, date, station):
-    
-    x, y, ref = data
+def plotting(data, center_nws, center_event, date, station, aux=None, norm=False):
     
     tol = 0.5
     center_lat, center_lon = center_nws[0], center_nws[1]
@@ -86,8 +106,22 @@ def plotting(data, center_nws, center_event, date, station):
     gl.top_labels = False
     gl.right_labels = False
     
+    param = 'reflectivity' if not norm else 'normalized_reflectivity'
+    
+    if aux:
+        lat = aux['lat']
+        lon = aux['lon']
+        ref = data[param]
+        vmin, vmax = -2, 2
+    else:
+        lat = data['lat']
+        lon = data['lon']
+        ref = data[param]
+
     # Plot data
-    im = ax.pcolormesh(x, y, ref, vmin=vmin, vmax=vmax, cmap='Spectral_r', zorder=0)
+    im = ax.pcolormesh(lat, lon, ref, 
+                       vmin=vmin, vmax=vmax, cmap='Spectral_r', zorder=0,
+                       transform=ccrs.PlateCarree())
     colorbar = fig.colorbar(im)
     colorbar.set_label('Equivalent reflectivity [dBZ]', rotation=270, labelpad=20)
     # Replace the extent with the proper location
@@ -111,14 +145,17 @@ if __name__ == '__main__':
     lon_nws, lat_nws = coords_nws[1], coords_nws[0]
     
     dates = [datetime.datetime(2020, 9, 5, 0),
-             datetime.datetime(2020, 9, 5, 12),
-             datetime.datetime(2020, 9, 5, 15),
-             datetime.datetime(2020, 9, 5, 18),
-             datetime.datetime(2020, 9, 5, 21)]
+             datetime.datetime(2020, 9, 6, 0)]
+    
+    hours = [0, 18, 21]
+    
+    datasets = []
     
     for date in dates:
         # Retrieve data
-        data, station_name = data_query(date, lon_nws, lat_nws)   
+        for hour in hours:
+            date = datetime.datetime(date.year, date.month, date.day, hour)
+            ds, ref, station_name = data_query(date, lon_nws, lat_nws)   
+            datasets.append(ds)
         
-        # Plot the data
-        plotting(data, [lat_nws, lon_nws], [lat_event, lon_event], date, station_name)
+    data = xr.concat(datasets, dim='t')
