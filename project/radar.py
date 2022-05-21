@@ -89,7 +89,7 @@ def data_query(date, lon, lat):
 
 def plotting(data, center_nws, center_event, date, station, aux=None, norm=False):
     
-    tol = 0.5
+    tol = 2
     center_lat, center_lon = center_nws[0], center_nws[1]
     # Define projection
     proj_ortho = ccrs.Orthographic(central_latitude=center_lat, 
@@ -119,7 +119,8 @@ def plotting(data, center_nws, center_event, date, station, aux=None, norm=False
         ref = data[param]
 
     # Plot data
-    im = ax.pcolormesh(lat, lon, ref, 
+    print(lat.shape, lon.shape, ref.shape)
+    im = ax.pcolormesh(lat.sel(t=date), lon.sel(t=date), ref.sel(t=date), 
                        vmin=vmin, vmax=vmax, cmap='Spectral_r', zorder=0,
                        transform=ccrs.PlateCarree())
     colorbar = fig.colorbar(im)
@@ -135,17 +136,27 @@ def plotting(data, center_nws, center_event, date, station, aux=None, norm=False
 if __name__ == '__main__':
     
     coords = {'Creek Fire': [37.201, -119.272],
-              'NWS Hanford': [36.314, -119.632]}
+              'NWS Hanford': [36.314, -119.632],
+              'Mendocino Fire': [39.5, -122.103],
+              'Dixie Fire': [39.871, -121.389],
+              'NWS Sacramento': [38.609, -121.386]}
     
-    coords_event = coords['Creek Fire']
-    coords_nws = coords['NWS Hanford']
+    coords_event = coords['Mendocino Fire']
+    coords_nws = coords['NWS Sacramento']
     
     # Initialize variables
     lon_event, lat_event = coords_event[1], coords_event[0]
     lon_nws, lat_nws = coords_nws[1], coords_nws[0]
     
-    dates = [datetime.datetime(2020, 9, 5, 0),
-             datetime.datetime(2020, 9, 6, 0)]
+    dates = [datetime.datetime(2018, 7, 27),
+            datetime.datetime(2018, 7, 28),
+            datetime.datetime(2018, 7, 29),
+            datetime.datetime(2019, 7, 27),
+            datetime.datetime(2019, 7, 28),
+            datetime.datetime(2019, 7, 29),
+            datetime.datetime(2020, 7, 27),
+            datetime.datetime(2020, 7, 28),
+            datetime.datetime(2020, 7, 29)]
     
     hours = [0, 18, 21]
     

@@ -20,19 +20,20 @@ import datetime
 import os
 
 
-def basemap(center, tol=0.5, sat_img=False):
+def basemap(center, tol=1, sat_img=False, gridlines=True):
     # Get map center point
     center_lat, center_lon = center[0], center[1]
     # Define projection
     proj_ortho = ccrs.Orthographic(central_latitude=center_lat, central_longitude=center_lon)
     proj_pc = ccrs.PlateCarree()
     
-    fig, ax = plt.subplots(subplot_kw={'projection': proj_ortho})
+    fig, ax = plt.subplots(dpi=300, subplot_kw={'projection': proj_ortho})
     ax.set_extent([center_lon-tol, center_lon+tol, center_lat-tol, center_lat+tol])
     ax.coastlines()
-    gl = ax.gridlines(draw_labels=True)
-    gl.top_labels = False
-    gl.right_labels = False
+    if gridlines:
+        gl = ax.gridlines(draw_labels=True)
+        gl.top_labels = False
+        gl.right_labels = False
     
     # Import satellite data
     if sat_img:
@@ -91,7 +92,7 @@ def goes_pull(year, month, day, satellite='G17', product=None, band=None):
     return xr.concat(img, dim='t')
     
     
-def reprocess(data, dataset_name=None, args=None):
+def reprocess(data, satellite='G17', dataset_name=None, args=None):
     
     ''' Reprocess coordinate data. '''
     
@@ -119,8 +120,10 @@ def reprocess(data, dataset_name=None, args=None):
     # GOES-R grid info
     if args:
         [central_lat, central_lon, bound_sz] = args[:]
-        print(data)
-        [x0, x1, y1, y0] = gp.grid_grab(central_lon, central_lat, bound_sz, H, r_pol, r_eq, lambda_0, size_x, size_y)
+        [x0, x1, y1, y0] = gp.grid_grab(central_lon, central_lat, bound_sz, H, r_pol, r_eq, lambda_0, size_x, size_y, satellite)
+        # Capture negative indices in case extent is out of bounds of satellite FOV
+        x0 = 0 if x0 < 0 else x0
+        y0 = 0 if y0 < 0 else y0
         lat_rad_1d = data['x'][x0:x1]
         lon_rad_1d = data['y'][y0:y1]
         data = data.isel(y=slice(y0, y1), x=slice(x0, x1))
@@ -192,7 +195,7 @@ def mapper(data, param, single_time=None, center=None, tol=None, extent=None, sa
                          0, data_[param])
             
             if param == 'Rad':
-                cmap = 'Greys_r'
+                cmap = 'Spectral'
             elif param == 'RRQPE':
                 cmap = 'Greens'
             else:
@@ -222,7 +225,7 @@ def mapper(data, param, single_time=None, center=None, tol=None, extent=None, sa
             plt.gca()
 
 
-def aggregator(dates, coords, product, band=None):
+def aggregator(dates, coords, satellite='G17', product='ABI-L1b-Radc', dataset='Rad', band=None):
     
     ''' Aggregate data into single Dataset for a collection of given dates. '''
     
@@ -230,12 +233,15 @@ def aggregator(dates, coords, product, band=None):
     dataset = []
     # Iterate over all dates
     for date in dates:
-        # Grab data
-        data = goes_pull(date.year, date.month, date.day, 
-                         satellite='G17', product=product, band=band)
-        # Apply geospatial coordinates
-        data = reprocess(data, dataset_name='Rad', args=[coords[0], coords[1], 5])
-        dataset.append(data)
+        print(date)
+        try:
+            data = goes_pull(date.year, date.month, date.day, 
+                             satellite=satellite, product=product, band=band)
+            # Apply geospatial coordinates
+            data = reprocess(data, dataset_name='Rad', args=[coords[0], coords[1], 3])
+            dataset.append(data)
+        except: 
+            continue
     # Concatenate everything
     dataset = xr.concat(dataset, dim='t')
     return dataset
@@ -243,19 +249,25 @@ def aggregator(dates, coords, product, band=None):
 def anom(data, param, center):
     
     for hour, hourly_data in data.groupby('t.hour'):
+        print(hour)
         # Find mean and standard across all days at the chosen hour
         mean, std = hourly_data[param].mean(dim='t'), hourly_data[param].std(dim='t')
         # Iterate over each daily instance of this chosen hour
         for i in range(0, len(hourly_data.t)):
+            print(hourly_data.t.isel(t=i).values)
             # Find standardized anomaly
             std_anom = (hourly_data[param].isel(t=i) - mean)/std
+            print(std_anom)
             # Normalize
             norm = matplotlib.colors.TwoSlopeNorm(vcenter=0, vmin=-2, vmax=2)
-        
-            fig, ax = basemap(center)
+            
+            std_anom_masked = np.ma.masked_invalid(std_anom)
+            print(std_anom_masked)
+            
+            fig, ax = basemap(center, tol=2)
             im = ax.pcolormesh(hourly_data['lon'].isel(t=0), 
                                hourly_data['lat'].isel(t=0), 
-                               std_anom.values.T, 
+                               std_anom_masked.T, 
                                transform=ccrs.PlateCarree(), 
                                norm=norm, cmap='RdBu_r')
             
@@ -270,7 +282,11 @@ if __name__ == '__main__':
     
     if not rerun:
         coords = {'Creek Fire': [37.201, -119.272],
-                  'Mendocino Fire': [39.243, -123.103]}
+                  'Mendocino Fire': [39.5, -122.103],
+                  'Dixie Fire': [39.871, -121.389]}
+        satellites = {'Creek Fire': 'G17',
+                      'Mendocino Fire': 'G16',
+                      'Dixie Fire': 'G17'}
         dates = {'Creek Fire': [datetime.datetime(2019, 9, 4),
                                 datetime.datetime(2019, 9, 5),
                                 datetime.datetime(2019, 9, 6),
@@ -298,25 +314,34 @@ if __name__ == '__main__':
                                 datetime.datetime(2018, 7, 30),
                                 datetime.datetime(2018, 7, 31),
                                 datetime.datetime(2018, 8, 1),
-                                datetime.datetime(2018, 8, 2),
                                 datetime.datetime(2019, 7, 27),
                                 datetime.datetime(2019, 7, 28),
                                 datetime.datetime(2019, 7, 29),
                                 datetime.datetime(2019, 7, 30),
                                 datetime.datetime(2019, 7, 31),
                                 datetime.datetime(2020, 8, 1),
-                                datetime.datetime(2020, 8, 2),
                                 datetime.datetime(2020, 7, 27),
                                 datetime.datetime(2020, 7, 28),
                                 datetime.datetime(2020, 7, 29),
                                 datetime.datetime(2020, 7, 30),
                                 datetime.datetime(2020, 7, 31),
-                                datetime.datetime(2020, 8, 1),
-                                datetime.datetime(2020, 8, 2)]}
+                                datetime.datetime(2020, 8, 1)],
+                 'Dixie Fire': [datetime.datetime(2020, 7, 16),
+                                datetime.datetime(2020, 7, 17),
+                                datetime.datetime(2020, 7, 18),
+                                datetime.datetime(2020, 7, 19),
+                                datetime.datetime(2020, 7, 20),
+                                datetime.datetime(2020, 7, 21),
+                                datetime.datetime(2021, 7, 16),
+                                datetime.datetime(2021, 7, 17),
+                                datetime.datetime(2021, 7, 18),
+                                datetime.datetime(2021, 7, 19),
+                                datetime.datetime(2021, 7, 20),
+                                datetime.datetime(2021, 7, 21),]}
         
         case_study = 'Creek Fire'
         
-        # data = aggregator(dates[case_study], coords[case_study], 'ABI-L1b-RadC', band=11)
+        # data = aggregator(dates[case_study], coords[case_study], satellite='G16', product='ABI-L2-RRQPEF')
         
         ''' Lightning '''
         # data = goes_pull(2020, 9, 7, satellite='G17', product='GLM')
@@ -324,22 +349,25 @@ if __name__ == '__main__':
         # mapper(data, single_time=True, center=coords['Creek Fire'], param='energy')
         
         ''' Band 2 Radiances '''
-        data = goes_pull(2020, 9, 6, satellite='G17', product='ABI-L1b-RadC', band=2)
-        data = reprocess(data, dataset_name='Smoke', args=[37.201, -119.272, 5])
-        # Plotting
-        mapper(data, param='Rad')
+        # data = goes_pull(2020, 9, 7, satellite=satellites[case_study], 
+        #                   product='ABI-L1b-RadC', band=11)
+        # data = reprocess(data, satellite=satellites[case_study],
+        #                   dataset_name='Rad', 
+        #                   args=[coords[case_study][0], coords[case_study][1], 10])
+        # # Plotting
+        # mapper(data, center=coords[case_study], tol=5, param='Rad')
         
         ''' Aerosol/Smoke '''
-        # data = goes_pull(2020, 9, 5, satellite='G17', product='ABI-L2-ADPC')
-        # data = reprocess(data, dataset_name='Smoke', args=[37.201, -119.272, 5])
+        # data = goes_pull(2020, 9, 7, satellite='G17', product='ABI-L2-ADPC')
+        # data = reprocess(data, dataset_name='Smoke', args=[37.201, -119.272, 10])
         # # Plotting
-        # mapper(data, param='Smoke')
+        # mapper(data, param='Smoke', tol=5)
         
         ''' Precipitation '''
-        # data = goes_pull(2020, 9, 7, satellite='G17', product='ABI-L2-RRQPEF')
-        # data = reprocess(data, dataset_name=list(data.variables)[0], args=[37.201, -119.272, 5])
+        # data = goes_pull(2020, 9, 9, satellite='G17', product='ABI-L2-RRQPEF')
+        # data = reprocess(data, dataset_name=list(data.variables)[0], args=[37.201, -119.272, 10])
         # # Plotting
-        # mapper(data, param=list(data.variables)[0], center=coords[case_study], tol=0.5)
+        # mapper(data, param=list(data.variables)[0], center=coords[case_study], tol=5)
         
         ''' Reflectance, Band 2 '''
         # dataset = []
